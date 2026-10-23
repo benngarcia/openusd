@@ -268,6 +268,8 @@ impl<W: Write> Emitter<'_, W> {
 
         // The declaration, which C++ `Sdf_WriteAttribute` writes only when it
         // carries something or no other statement would declare the attribute.
+        // Every statement carries the variability, so a uniform attribute
+        // stays uniform whichever of them declares it.
         if !meta_fields.is_empty()
             || default.is_some()
             || custom
@@ -303,7 +305,7 @@ impl<W: Write> Emitter<'_, W> {
         // Time samples (separate statement if present)
         if let Some(Value::TimeSamples(samples)) = time_samples {
             self.write_indent()?;
-            write!(self.out, "{type_name} {name}.timeSamples = ")?;
+            write!(self.out, "{variability}{type_name} {name}.timeSamples = ")?;
             self.write_time_samples(&samples)?;
             writeln!(self.out)?;
         }
@@ -320,7 +322,7 @@ impl<W: Write> Emitter<'_, W> {
 
         // Connections (separate statement if present)
         if let Some(Value::PathListOp(op)) = connections {
-            self.emit_connection(name, &op, &type_name)?;
+            self.emit_connection(name, &op, &format!("{variability}{type_name}"))?;
         }
 
         Ok(())
@@ -1240,7 +1242,12 @@ fn format_dictionary(s: &mut String, dict: &HashMap<String, Value>, multi_line: 
 
 /// A number as C++ `TfStringify` writes a `double`: the shortest digits that
 /// read back to it, in decimal from 1e-6 up to 1e15 and in exponent form
-/// outside that (double-conversion's `ToShortest` with those bounds).
+/// outside that, laid out as double-conversion's `ToShortest` with those
+/// bounds lays them out.
+///
+/// TODO: where two shortest spellings are equally near the value, Rust and
+/// double-conversion can pick different last digits (`865787463439609.3`
+/// here, `.2` in C++). Both read back to the same value.
 fn stringify(v: f64) -> String {
     shortest(v, format!("{v:e}"))
 }

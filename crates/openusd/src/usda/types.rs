@@ -400,17 +400,17 @@ pub(super) fn parse_spline(cursor: &mut Cursor<'_>, ty: &sdf::ValueTypeName) -> 
                     pre.fract() == 0.0 && post.fract() == 0.0,
                     "spline loop counts must be integers"
                 );
-                spline.inner_loops = Some(sdf::LoopParams {
+                let params = sdf::LoopParams {
                     proto_start,
                     proto_end,
                     num_pre_loops: pre as i32,
                     num_post_loops: post as i32,
                     value_offset,
-                });
+                };
+                // All zeros are C++'s default `TsLoopParams`: no inner loop.
+                spline.inner_loops = Some(params).filter(|p| *p != sdf::LoopParams::NONE);
             }
-            Token::Number(time) => spline
-                .set_knot(parse_knot(c, time.parse()?, spline.curve_type)?)
-                .map_err(RawError::new)?,
+            Token::Number(time) => spline.set_knot(parse_knot(c, time.parse()?)?).map_err(RawError::new)?,
             other => bail!("Unexpected spline token: {other:?}"),
         }
         Ok(())
@@ -420,7 +420,7 @@ pub(super) fn parse_spline(cursor: &mut Cursor<'_>, ty: &sdf::ValueTypeName) -> 
 
 /// One knot after its time: `: [preValue &] value` and its `;`-separated
 /// parameters.
-fn parse_knot(cursor: &mut Cursor<'_>, time: f64, curve_type: sdf::CurveType) -> Result<sdf::Knot, RawError> {
+fn parse_knot(cursor: &mut Cursor<'_>, time: f64) -> Result<sdf::Knot, RawError> {
     cursor.expect_punctuation(':')?;
     let first: f64 = parse_token(cursor)?;
     let (pre_value, value) = if cursor.eat_punctuation('&')? {
@@ -443,7 +443,7 @@ fn parse_knot(cursor: &mut Cursor<'_>, time: f64, curve_type: sdf::CurveType) ->
             continue;
         }
         match cursor.expect_identifier()? {
-            "pre" => knot.pre_tangent = parse_tangent(cursor, curve_type)?,
+            "pre" => knot.pre_tangent = parse_tangent(cursor)?,
             "post" => {
                 knot.next_interpolation = match cursor.expect_identifier()? {
                     "none" => sdf::Interpolation::ValueBlock,
@@ -453,7 +453,7 @@ fn parse_knot(cursor: &mut Cursor<'_>, time: f64, curve_type: sdf::CurveType) ->
                     other => bail!("Unexpected knot interpolation: {other}"),
                 };
                 if cursor.at_punctuation('(')? {
-                    knot.post_tangent = parse_tangent(cursor, curve_type)?;
+                    knot.post_tangent = parse_tangent(cursor)?;
                 }
             }
             other => bail!("Unexpected knot parameter: {other}"),
@@ -462,9 +462,10 @@ fn parse_knot(cursor: &mut Cursor<'_>, time: f64, curve_type: sdf::CurveType) ->
     Ok(knot)
 }
 
-/// A tangent: `(width, slope)` on a Bezier curve, `(slope)` on a Hermite
-/// one, whose widths are fixed.
-fn parse_tangent(cursor: &mut Cursor<'_>, curve_type: sdf::CurveType) -> Result<sdf::Tangent, RawError> {
+/// A tangent: `(width, slope)`, or `(slope)` with no width, as C++ reads
+/// either on either curve type. C++ writes the second form for a Hermite
+/// curve, whose widths are fixed.
+fn parse_tangent(cursor: &mut Cursor<'_>) -> Result<sdf::Tangent, RawError> {
     let mut numbers = Vec::new();
     parse_block(cursor, '(', ')', |c| {
         if let Some(Token::Identifier(algorithm)) = c.peek()? {
@@ -473,10 +474,10 @@ fn parse_tangent(cursor: &mut Cursor<'_>, curve_type: sdf::CurveType) -> Result<
         numbers.push(parse_token::<f64>(c)?);
         Ok(())
     })?;
-    Ok(match (curve_type, numbers.as_slice()) {
-        (sdf::CurveType::Hermite, &[slope]) => sdf::Tangent { width: 0.0, slope },
-        (sdf::CurveType::Bezier, &[width, slope]) => sdf::Tangent { width, slope },
-        _ => bail!("a spline tangent is (width, slope) on a Bezier curve and (slope) on a Hermite one"),
+    Ok(match *numbers.as_slice() {
+        [slope] => sdf::Tangent { width: 0.0, slope },
+        [width, slope] => sdf::Tangent { width, slope },
+        _ => bail!("a spline tangent is (width, slope) or (slope)"),
     })
 }
 

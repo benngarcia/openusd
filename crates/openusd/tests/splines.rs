@@ -42,3 +42,20 @@ fn crate_file_reads_as_openusd_wrote_it() {
     let data = CrateData::open(std::fs::read("fixtures/splines.usdc").unwrap(), true).unwrap();
     assert_eq!(written(&data), spline_statements(&expected));
 }
+
+// A uniform attribute declared only by its `.spline`, `.timeSamples` or
+// `.connect` statement keeps its variability, which each statement carries
+// as C++ `Sdf_WriteAttribute` writes them.
+#[test]
+fn uniform_is_kept_on_every_statement() {
+    let text = "#usda 1.0\n\ndef \"S\"\n{\n    uniform double s.spline = {\n        1: 0; post held,\n    }\n    uniform double t.timeSamples = {\n        1: 2,\n    }\n    uniform token u.connect = </S.c>\n}\n";
+    let data = usda::parse(text).unwrap();
+    let written = TextWriter::write_to_string(&data).unwrap();
+    for statement in [
+        "uniform double s.spline",
+        "uniform double t.timeSamples",
+        "uniform token u.connect",
+    ] {
+        assert!(written.contains(statement), "{statement} in:\n{written}");
+    }
+}

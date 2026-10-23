@@ -305,6 +305,17 @@ impl Spline {
     }
 }
 
+impl LoopParams {
+    /// C++'s default `TsLoopParams`, which means no inner loop.
+    pub const NONE: Self = Self {
+        proto_start: 0.0,
+        proto_end: 0.0,
+        num_pre_loops: 0,
+        num_post_loops: 0,
+        value_offset: 0.0,
+    };
+}
+
 /// The only spline encoding crate version 0.12.0 carries.
 const BINARY_VERSION: u8 = 1;
 
@@ -325,7 +336,8 @@ impl SplineValueType {
         match self {
             Self::Double => value,
             Self::Float => f64::from(value as f32),
-            Self::Half => f16::from_f64(value).to_f64(),
+            // Through a float, as C++ narrows a double to `GfHalf`.
+            Self::Half => f16::from_f32(value as f32).to_f64(),
         }
     }
 
@@ -350,7 +362,7 @@ impl SplineValueType {
         match self {
             Self::Double => out.extend(value.to_le_bytes()),
             Self::Float => out.extend((value as f32).to_le_bytes()),
-            Self::Half => out.extend(f16::from_f64(value).to_le_bytes()),
+            Self::Half => out.extend(f16::from_f32(value as f32).to_le_bytes()),
         }
     }
 }
