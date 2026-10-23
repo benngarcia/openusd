@@ -18,7 +18,7 @@ use crate::sdf::{
     self, AbstractData, AssetPath, ChildrenKey, FieldKey, FormatError, LayerOffset, ListOp, Path, Payload, Reference,
     SpecType, Specifier, Value, Variability,
 };
-use crate::tf::Token;
+use crate::tf::{self, Token};
 
 /// Emits `usda` text from an [`AbstractData`].
 pub struct TextWriter;
@@ -196,7 +196,7 @@ impl<W: Write> Emitter<'_, W> {
             .map(|name| Ok((path.append_property(&name)?, name)))
             .collect::<Result<Vec<_>, FormatError>>()?;
         props.sort_by(|(a_path, a), (b_path, b)| {
-            sdf::element_cmp(a.as_str(), b.as_str()).then_with(|| {
+            tf::dictionary_cmp(a.as_str(), b.as_str()).then_with(|| {
                 let kind = |p: &Path| data.spec_type(p).map(|t| t as u32);
                 kind(a_path).cmp(&kind(b_path))
             })
@@ -423,10 +423,7 @@ impl<W: Write> Emitter<'_, W> {
 
     fn emit_connection(&mut self, attr_name: &str, op: &ListOp<Path>, type_name: &str) -> Result<(), FormatError> {
         // Emit as `typeName attr.connect = paths` or list-op form.
-        self.emit_listop_statement(&format!("{type_name} {attr_name}.connect"), op, |s, p| {
-            write!(s, "<{}>", p.as_str())?;
-            Ok(())
-        })
+        self.emit_targets_statement(&format!("{type_name} {attr_name}.connect"), op)
     }
 
     fn emit_relationship(&mut self, data: &dyn AbstractData, path: &Path, name: &str) -> Result<(), FormatError> {
@@ -461,24 +458,8 @@ impl<W: Write> Emitter<'_, W> {
         if let Some(Value::PathListOp(op)) = &targets
             && op.is_explicit()
         {
-            match op.explicit_items().len() {
-                0 => {
-                    self.out.write_all(b" = None")?;
-                }
-                1 => {
-                    write!(self.out, " = <{}>", op.explicit_items()[0].as_str())?;
-                }
-                _ => {
-                    self.out.write_all(b" = [")?;
-                    for (i, p) in op.explicit_items().iter().enumerate() {
-                        if i > 0 {
-                            self.out.write_all(b", ")?;
-                        }
-                        write!(self.out, "<{}>", p.as_str())?;
-                    }
-                    self.out.write_all(b"]")?;
-                }
-            }
+            self.out.write_all(b" = ")?;
+            self.write_listop_items(op.explicit_items(), &mut write_path, Items::Terminated)?;
         }
 
         if !meta_fields.is_empty() {
@@ -499,10 +480,7 @@ impl<W: Write> Emitter<'_, W> {
         if let Some(Value::PathListOp(op)) = &targets
             && !op.is_explicit()
         {
-            self.emit_listop_statement(&format!("rel {name}"), op, |s, p| {
-                write!(s, "<{}>", p.as_str())?;
-                Ok(())
-            })?;
+            self.emit_targets_statement(&format!("rel {name}"), op)?;
         }
 
         Ok(())
@@ -749,7 +727,28 @@ impl<W: Write> Emitter<'_, W> {
         }
     }
 
-    fn emit_listop_statement<T, F>(&mut self, prefix: &str, op: &ListOp<T>, mut fmt_item: F) -> Result<(), FormatError>
+    fn emit_listop_statement<T, F>(&mut self, prefix: &str, op: &ListOp<T>, fmt_item: F) -> Result<(), FormatError>
+    where
+        T: Bracketed,
+        F: FnMut(&mut String, &T) -> Result<(), FormatError>,
+    {
+        self.emit_list_statements(prefix, op, fmt_item, Items::Separated)
+    }
+
+    /// A relationship's targets or an attribute's connections, whose items
+    /// each end with a comma when they go one per line (C++
+    /// `Sdf_WriteRelationshipTargetList`, `Sdf_WriteConnectionStatement`).
+    fn emit_targets_statement(&mut self, prefix: &str, op: &ListOp<sdf::Path>) -> Result<(), FormatError> {
+        self.emit_list_statements(prefix, op, write_path, Items::Terminated)
+    }
+
+    fn emit_list_statements<T, F>(
+        &mut self,
+        prefix: &str,
+        op: &ListOp<T>,
+        mut fmt_item: F,
+        items_end: Items,
+    ) -> Result<(), FormatError>
     where
         T: Bracketed,
         F: FnMut(&mut String, &T) -> Result<(), FormatError>,
@@ -757,7 +756,7 @@ impl<W: Write> Emitter<'_, W> {
         if op.is_explicit() {
             self.write_indent()?;
             write!(self.out, "{prefix} = ")?;
-            self.write_listop_items(op.explicit_items(), &mut fmt_item)?;
+            self.write_listop_items(op.explicit_items(), &mut fmt_item, items_end)?;
             writeln!(self.out)?;
             return Ok(());
         }
@@ -772,7 +771,7 @@ impl<W: Write> Emitter<'_, W> {
             if !items.is_empty() {
                 self.write_indent()?;
                 write!(self.out, "{kw} {prefix} = ")?;
-                self.write_listop_items(items, &mut fmt_item)?;
+                self.write_listop_items(items, &mut fmt_item, items_end)?;
                 writeln!(self.out)?;
             }
         }
@@ -782,7 +781,7 @@ impl<W: Write> Emitter<'_, W> {
     /// The body of one list-op statement: the items bracketed, `None` for an
     /// empty list, and a lone item bare where its type allows it
     /// (C++ `_WriteListOpList`).
-    fn write_listop_items<T, F>(&mut self, items: &[T], fmt_item: &mut F) -> Result<(), FormatError>
+    fn write_listop_items<T, F>(&mut self, items: &[T], fmt_item: &mut F, items_end: Items) -> Result<(), FormatError>
     where
         T: Bracketed,
         F: FnMut(&mut String, &T) -> Result<(), FormatError>,
@@ -793,6 +792,20 @@ impl<W: Write> Emitter<'_, W> {
             let mut buf = String::new();
             fmt_item(&mut buf, &items[0])?;
             self.out.write_all(buf.as_bytes())?;
+        } else if T::PER_LINE {
+            writeln!(self.out, "[")?;
+            self.indent += 1;
+            for (i, item) in items.iter().enumerate() {
+                let mut line = String::new();
+                fmt_item(&mut line, item)?;
+                if items_end == Items::Terminated || i + 1 < items.len() {
+                    line.push(',');
+                }
+                self.write_line(&line)?;
+            }
+            self.indent -= 1;
+            self.write_indent()?;
+            self.out.write_all(b"]")?;
         } else {
             self.out.write_all(b"[")?;
             for (i, item) in items.iter().enumerate() {
@@ -1073,6 +1086,10 @@ where
 /// `prepend references = @a.usd@` does.
 trait Bracketed: Clone + PartialEq + Hash {
     fn needs_brackets(&self) -> bool;
+
+    /// Whether a list of several is written one item per line, as C++ writes
+    /// paths, references and payloads (`_ListOpWriter<T>::ItemPerLine`).
+    const PER_LINE: bool = false;
 }
 
 /// A lone name or number keeps its brackets: nothing else marks it as a list.
@@ -1104,6 +1121,8 @@ impl Bracketed for sdf::Path {
     fn needs_brackets(&self) -> bool {
         false
     }
+
+    const PER_LINE: bool = true;
 }
 
 /// A lone payload is already delimited by its asset path.
@@ -1111,6 +1130,8 @@ impl Bracketed for sdf::Payload {
     fn needs_brackets(&self) -> bool {
         false
     }
+
+    const PER_LINE: bool = true;
 }
 
 /// A reference writes bare like a payload, until custom data gives it a
@@ -1119,6 +1140,22 @@ impl Bracketed for sdf::Reference {
     fn needs_brackets(&self) -> bool {
         !self.custom_data.is_empty()
     }
+
+    const PER_LINE: bool = true;
+}
+
+/// How the items of a list written one per line end.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Items {
+    /// A comma between items (a list-op field).
+    Separated,
+    /// A comma after every item (relationship targets and connections).
+    Terminated,
+}
+
+fn write_path(s: &mut String, path: &sdf::Path) -> Result<(), FormatError> {
+    write!(s, "<{}>", path.as_str())?;
+    Ok(())
 }
 
 fn format_inline_listop<T, F>(s: &mut String, op: &ListOp<T>, fmt_item: F) -> Result<(), FormatError>
@@ -1355,16 +1392,10 @@ fn stringify_spline_value(value_type: sdf::SplineValueType, v: f64) -> String {
 }
 
 /// A dictionary key is written unquoted only when it is an identifier (C++
-/// `TfIsValidIdentifier`): a letter or underscore, then letters, digits and
-/// underscores. C++ refuses a bare namespaced key (`int a:b = 3`) in a
-/// dictionary, so one is quoted.
+/// `TfIsValidIdentifier`). C++ refuses a bare namespaced key (`int a:b = 3`)
+/// in a dictionary, so one is quoted.
 fn is_bare_dict_key(k: &str) -> bool {
-    let mut chars = k.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    tf::is_valid_identifier(k)
 }
 
 fn format_layer_offset(s: &mut String, o: &LayerOffset) {
