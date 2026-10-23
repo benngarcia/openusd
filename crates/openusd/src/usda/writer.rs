@@ -1240,39 +1240,46 @@ fn format_dictionary(s: &mut String, dict: &HashMap<String, Value>, multi_line: 
     Ok(())
 }
 
-/// A number as C++ `TfStringify` writes a `double`: the shortest digits that
-/// read back to it, in decimal from 1e-6 up to 1e15 and in exponent form
-/// outside that, laid out as double-conversion's `ToShortest` with those
-/// bounds lays them out.
-///
-/// TODO: where two shortest spellings are equally near the value, Rust and
-/// double-conversion can pick different last digits (`865787463439609.3`
-/// here, `.2` in C++). Both read back to the same value.
+/// A number as C++ `TfStringify` writes a `double`: double-conversion's
+/// `ToShortest`, the shortest digits that read back to it, the nearest of
+/// those, an exact tie rounded to even. Rust's own `{:e}` breaks a tie
+/// upward, writing `3.7029800415039063` where C++ writes `…062`; zmij picks
+/// the same digits as C++.
 fn stringify(v: f64) -> String {
-    shortest(v, format!("{v:e}"))
+    shortest(v, zmij::Buffer::new().format(v))
 }
 
-/// A number as C++ `TfStringify` writes a `float`: the shortest digits that
-/// read back to it as a `float`.
+/// A number as C++ `TfStringify` writes a `float` (`ToShortestSingle`): the
+/// shortest digits that read back to it as a `float`, chosen as for a double.
 fn stringify_f32(v: f32) -> String {
-    shortest(f64::from(v), format!("{v:e}"))
+    shortest(f64::from(v), zmij::Buffer::new().format(v))
 }
 
-/// Lays out shortest digits, given in Rust's exponent form (`-1.25e-7`), as
-/// double-conversion does with `decimal_in_shortest_low` -6 and
-/// `decimal_in_shortest_high` 15: no `+` on an exponent and no trailing `.0`.
-fn shortest(v: f64, exponent_form: String) -> String {
+/// Lays out shortest digits, given as zmij prints them (`0.001`, `1.5e300`,
+/// `-1.25e-7`), as double-conversion does with `decimal_in_shortest_low` -6
+/// and `decimal_in_shortest_high` 15: decimal for exponents from -6 up to 14,
+/// exponent form outside, no `+` on an exponent and no trailing `.0`.
+fn shortest(v: f64, printed: &str) -> String {
     if v.is_nan() {
         return "nan".into();
     }
     if v.is_infinite() {
         return if v > 0.0 { "inf" } else { "-inf" }.into();
     }
-    let (mantissa, exponent) = exponent_form.split_once('e').expect("{:e} writes an exponent");
-    let exponent: i32 = exponent.parse().expect("{:e} writes an integer exponent");
-    let (sign, mantissa) = mantissa.strip_prefix('-').map_or(("", mantissa), |m| ("-", m));
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    let decimal_point = exponent + 1;
+    let (sign, printed) = printed.strip_prefix('-').map_or(("", printed), |p| ("-", p));
+    let (mantissa, scale) = printed.split_once('e').unwrap_or((printed, "0"));
+    let scale: i32 = scale.parse().expect("zmij writes an integer exponent");
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let all = format!("{whole}{fraction}");
+    let significant = all.trim_start_matches('0');
+    // Where the decimal point falls after the first significant digit; zero
+    // has none, and is written `0`.
+    let decimal_point = whole.len() as i32 + scale - (all.len() - significant.len()) as i32;
+    let digits = significant.trim_end_matches('0');
+    if digits.is_empty() {
+        return format!("{sign}0");
+    }
+    let exponent = decimal_point - 1;
     let n = digits.len() as i32;
     let body = if (-6..15).contains(&exponent) {
         if decimal_point <= 0 {
@@ -1324,16 +1331,17 @@ fn stringify_spline_value(value_type: sdf::SplineValueType, v: f64) -> String {
     }
 }
 
-/// A dictionary key can be emitted unquoted only when it tokenizes as a USDA
-/// `Identifier` or `NamespacedIdentifier`: starts with a letter/underscore and
-/// continues with alphanumerics, underscores, or colons.
+/// A dictionary key is written unquoted only when it is an identifier (C++
+/// `TfIsValidIdentifier`): a letter or underscore, then letters, digits and
+/// underscores. C++ refuses a bare namespaced key (`int a:b = 3`) in a
+/// dictionary, so one is quoted.
 fn is_bare_dict_key(k: &str) -> bool {
     let mut chars = k.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
         _ => return false,
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn format_layer_offset(s: &mut String, o: &LayerOffset) {
@@ -2055,6 +2063,61 @@ def "Mesh"
                 "lost key {k:?}; roundtripped keys: {:?}",
                 got.keys().collect::<Vec<_>>()
             );
+        }
+    }
+
+    // Values exactly halfway between two shortest spellings, as OpenUSD 26.11
+    // wrote them: the tie goes to the even digit. Rust's own `{:e}` writes
+    // each with the odd one.
+    #[test]
+    fn shortest_ties_round_to_even() {
+        for (bits, written) in [
+            (0x3f83210000000000, "0.009340286254882812"),
+            (0x3fea93d000000000, "0.8305435180664062"),
+            (0x3ff98c0800000000, "1.5966873168945312"),
+            (0x4002bc5400000000, "2.3419570922851562"),
+            (0x4008d22400000000, "3.1026077270507812"),
+            (0x400ee7f400000000, "3.8632583618164062"),
+            (0x4022785200000000, "9.235000610351562"),
+            (0x4025833a00000000, "10.756301879882812"),
+            (0x40288e2200000000, "12.277603149414062"),
+            (0x402b990a00000000, "13.798904418945312"),
+            (0x402ea3f200000000, "15.320205688476562"),
+            (0x4030d0dd00000000, "16.815872192382812"),
+        ] {
+            assert_eq!(stringify(f64::from_bits(bits)), written);
+        }
+        for (bits, written) in [
+            (0x3d340000, "0.043945312"),
+            (0x40a9a000, "5.3007812"),
+            (0x41a65000, "20.789062"),
+            (0x41f79000, "30.945312"),
+            (0x4224a800, "41.164062"),
+            (0x424d4800, "51.320312"),
+            (0x4275e800, "61.476562"),
+            (0x430f4400, "143.26562"),
+            (0x43239400, "163.57812"),
+            (0x4337e400, "183.89062"),
+            (0x434c3400, "204.20312"),
+            (0x43608400, "224.51562"),
+        ] {
+            assert_eq!(stringify_f32(f32::from_bits(bits)), written);
+        }
+    }
+
+    #[test]
+    fn shortest_layout() {
+        for (v, written) in [
+            (0.0, "0"),
+            (-0.0, "-0"),
+            (1e15, "1e15"),
+            (123456789012345.0, "123456789012345"),
+            (1e-7, "1e-7"),
+            (1e-6, "0.000001"),
+            (1.5e300, "1.5e300"),
+            (2.5e-300, "2.5e-300"),
+        ] {
+            assert_eq!(stringify(v), written);
         }
     }
 }

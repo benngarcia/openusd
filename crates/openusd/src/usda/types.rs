@@ -400,11 +400,12 @@ pub(super) fn parse_spline(cursor: &mut Cursor<'_>, ty: &sdf::ValueTypeName) -> 
                     pre.fract() == 0.0 && post.fract() == 0.0,
                     "spline loop counts must be integers"
                 );
+                // C++ `TsSpline::SetInnerLoopParams` ignores a negative count.
                 let params = sdf::LoopParams {
                     proto_start,
                     proto_end,
-                    num_pre_loops: pre as i32,
-                    num_post_loops: post as i32,
+                    num_pre_loops: (pre as i32).max(0),
+                    num_post_loops: (post as i32).max(0),
                     value_offset,
                 };
                 // All zeros are C++'s default `TsLoopParams`: no inner loop.
