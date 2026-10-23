@@ -316,6 +316,7 @@ pub enum Type {
     TimeCode = 56,
     PathExpression = 57,
     Relocates = 58,
+    Spline = 59,
 }
 
 #[cfg(test)]

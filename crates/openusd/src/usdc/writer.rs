@@ -735,13 +735,7 @@ impl<'w, W: Write + Seek> Packer<'w, W> {
                 reason: "an opaque value is never serialized".into(),
             }),
 
-            // Heterogeneous arrays are produced only by the USDA spline parser;
-            // the USDC binary format has no native representation for them.
-            Value::ValueVec(_) => Err(FormatError::Encode {
-                reason:
-                    "Value::ValueVec cannot be serialized to USDC (the binary format lacks a heterogeneous-array type)"
-                        .into(),
-            }),
+            Value::Spline(spline) => self.write_spline(spline),
         }
     }
 
@@ -1026,6 +1020,23 @@ impl<'w, W: Write + Seek> Packer<'w, W> {
             self.write_pod(&vi)?;
         }
         Ok(rep_heap(Type::VariantSelectionMap, off, false))
+    }
+
+    /// A spline, as C++ `CrateFile` writes one: its knots as one blob
+    /// (`std::vector<uint8_t>`), then each knot's custom data keyed by knot
+    /// time (`std::unordered_map<double, VtDictionary>`).
+    fn write_spline(&mut self, spline: &sdf::Spline) -> Result<ValueRep, FormatError> {
+        let off = self.pos()?;
+        let blob = spline.to_binary();
+        self.write_count(blob.len() as u64)?;
+        self.write_bytes(&blob)?;
+        let custom: Vec<&sdf::Knot> = spline.knots().iter().filter(|k| !k.custom_data.is_empty()).collect();
+        self.write_count(custom.len() as u64)?;
+        for knot in custom {
+            self.write_pod(&knot.time)?;
+            self.write_dictionary_entries(&knot.custom_data)?;
+        }
+        Ok(rep_heap(Type::Spline, off, false))
     }
 
     fn write_relocates(&mut self, v: &[(Path, Path)]) -> Result<ValueRep, FormatError> {

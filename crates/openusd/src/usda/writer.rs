@@ -234,20 +234,14 @@ impl<W: Write> Emitter<'_, W> {
     }
 
     fn emit_attribute(&mut self, data: &dyn AbstractData, path: &Path, name: &str) -> Result<(), FormatError> {
-        self.write_indent()?;
-
-        if matches!(
+        let custom = matches!(
             get_value(data, path, FieldKey::Custom.as_str()),
             Some(Value::Bool(true))
-        ) {
-            self.out.write_all(b"custom ")?;
-        }
-        if matches!(
-            get_value(data, path, FieldKey::Variability.as_str()),
-            Some(Value::Variability(Variability::Uniform))
-        ) {
-            self.out.write_all(b"uniform ")?;
-        }
+        );
+        let variability = match get_value(data, path, FieldKey::Variability.as_str()) {
+            Some(Value::Variability(Variability::Uniform)) => "uniform ",
+            _ => "",
+        };
 
         // The declared spelling is written back as its standard spelling (C++
         // `GetSerializationName`): `Color` in, `color3d` out; an unregistered
@@ -260,17 +254,11 @@ impl<W: Write> Emitter<'_, W> {
                 });
             }
         };
-        write!(self.out, "{type_name} {name}")?;
 
         let default = get_value(data, path, FieldKey::Default.as_str());
         let time_samples = get_value(data, path, FieldKey::TimeSamples.as_str());
         let spline = get_value(data, path, SPLINE_FIELD);
-
-        if let Some(v) = default {
-            self.out.write_all(b" = ")?;
-            self.write_value(&v)?;
-        }
-
+        let connections = get_value(data, path, FieldKey::ConnectionPaths.as_str());
         let meta_fields: Vec<String> = data
             .list_fields(path)
             .unwrap_or_default()
@@ -278,20 +266,39 @@ impl<W: Write> Emitter<'_, W> {
             .filter(|n| !is_attribute_structural_field(n))
             .collect();
 
-        if !meta_fields.is_empty() {
-            self.out.write_all(b" (")?;
-            writeln!(self.out)?;
-            self.indent += 1;
-            for name in &meta_fields {
-                let value = data.field(path, name)?;
-                self.emit_metadata_entry(name, &value)?;
-            }
-            self.indent -= 1;
+        // The declaration, which C++ `Sdf_WriteAttribute` writes only when it
+        // carries something or no other statement would declare the attribute.
+        if !meta_fields.is_empty()
+            || default.is_some()
+            || custom
+            || (time_samples.is_none() && spline.is_none() && connections.is_none())
+        {
             self.write_indent()?;
-            self.out.write_all(b")")?;
-        }
+            if custom {
+                self.out.write_all(b"custom ")?;
+            }
+            write!(self.out, "{variability}{type_name} {name}")?;
 
-        writeln!(self.out)?;
+            if let Some(v) = default {
+                self.out.write_all(b" = ")?;
+                self.write_value(&v)?;
+            }
+
+            if !meta_fields.is_empty() {
+                self.out.write_all(b" (")?;
+                writeln!(self.out)?;
+                self.indent += 1;
+                for name in &meta_fields {
+                    let value = data.field(path, name)?;
+                    self.emit_metadata_entry(name, &value)?;
+                }
+                self.indent -= 1;
+                self.write_indent()?;
+                self.out.write_all(b")")?;
+            }
+
+            writeln!(self.out)?;
+        }
 
         // Time samples (separate statement if present)
         if let Some(Value::TimeSamples(samples)) = time_samples {
@@ -301,184 +308,87 @@ impl<W: Write> Emitter<'_, W> {
             writeln!(self.out)?;
         }
 
+        if let Some(Value::Spline(spline)) = spline {
+            self.write_indent()?;
+            writeln!(self.out, "{variability}{type_name} {name}.spline = {{")?;
+            self.indent += 1;
+            self.write_spline(&spline)?;
+            self.indent -= 1;
+            self.write_indent()?;
+            writeln!(self.out, "}}")?;
+        }
+
         // Connections (separate statement if present)
-        if let Some(Value::PathListOp(op)) = get_value(data, path, FieldKey::ConnectionPaths.as_str()) {
+        if let Some(Value::PathListOp(op)) = connections {
             self.emit_connection(name, &op, &type_name)?;
         }
 
-        // Splines (separate statement if present)
-        if let Some(Value::Dictionary(dict)) = spline {
-            self.write_indent()?;
-            write!(self.out, "{type_name} {name}.spline = ")?;
-            self.write_spline(&dict)?;
-            writeln!(self.out)?;
-        }
-
         Ok(())
     }
 
-    /// Emit a spline dictionary in the native spline grammar. Inverse of
-    /// `parser::parse_spline`. The input `dict` has the keys produced there:
-    /// `curveType`, `pre/postExtrapolation`, `loopParameters`, `knots`,
-    /// `knotCustomData`.
-    fn write_spline(&mut self, dict: &HashMap<String, Value>) -> Result<(), FormatError> {
-        self.out.write_all(b"{")?;
-        writeln!(self.out)?;
-        self.indent += 1;
-
-        let curve_type = match dict.get("curveType") {
-            Some(Value::Token(t)) => t.as_str(),
-            _ => "bezier",
-        };
-        self.write_indent()?;
-        writeln!(self.out, "{curve_type},")?;
-
-        // Extrapolation
-        if let Some(value) = dict.get("preExtrapolation") {
-            self.write_extrapolation("pre", value)?;
+    /// A spline's lines, as C++ `Sdf_FileIOUtility::WriteSpline` writes them:
+    /// the curve type when a segment is curved or the curve is Hermite,
+    /// extrapolation other than held, the inner loop, then each knot.
+    fn write_spline(&mut self, spline: &sdf::Spline) -> Result<(), FormatError> {
+        if spline.has_curve_segments() || spline.curve_type == sdf::CurveType::Hermite {
+            self.write_line(&format!("{},", spline.curve_type.keyword()))?;
         }
-        if let Some(value) = dict.get("postExtrapolation") {
-            self.write_extrapolation("post", value)?;
-        }
-
-        // Loop parameters
-        if let Some(Value::Dictionary(loop_dict)) = dict.get("loopParameters") {
-            self.write_loop(loop_dict)?;
-        }
-
-        // Knots
-        let knot_custom = match dict.get("knotCustomData") {
-            Some(Value::Dictionary(m)) => Some(m),
-            _ => None,
-        };
-        if let Some(Value::ValueVec(knots)) = dict.get("knots") {
-            for knot in knots {
-                if let Value::Dictionary(knot) = knot {
-                    self.write_knot(knot, knot_custom)?;
+        for (side, extrapolation) in [("pre", spline.pre_extrapolation), ("post", spline.post_extrapolation)] {
+            match extrapolation {
+                sdf::Extrapolation::Held => {}
+                sdf::Extrapolation::Sloped(slope) => {
+                    self.write_line(&format!("{side}: sloped({}),", stringify(slope)))?
                 }
+                other => self.write_line(&format!("{side}: {},", other.keyword()))?,
             }
         }
+        if let Some(lp) = spline.inner_loops {
+            self.write_line(&format!(
+                "loop: ({}, {}, {}, {}, {}),",
+                stringify(lp.proto_start),
+                stringify(lp.proto_end),
+                lp.num_pre_loops,
+                lp.num_post_loops,
+                stringify(lp.value_offset)
+            ))?;
+        }
 
-        self.indent -= 1;
-        self.write_indent()?;
-        self.out.write_all(b"}")?;
+        // Before the first knot there is no segment, but its pre-tangent is
+        // written as if one were curved, so it is kept.
+        let mut curved = true;
+        for knot in spline.knots() {
+            let value = |v: f64| stringify_spline_value(spline.value_type, v);
+            let tangent = |t: sdf::Tangent| match spline.curve_type {
+                sdf::CurveType::Bezier => format!("({}, {})", stringify(t.width), value(t.slope)),
+                sdf::CurveType::Hermite => format!("({})", value(t.slope)),
+            };
+            let mut line = format!("{}:", stringify(knot.time));
+            if let Some(pre_value) = knot.pre_value {
+                write!(line, " {} &", value(pre_value)).unwrap();
+            }
+            write!(line, " {}", value(knot.value)).unwrap();
+            if curved {
+                write!(line, "; pre {}", tangent(knot.pre_tangent)).unwrap();
+            }
+            curved = knot.next_interpolation == sdf::Interpolation::Curve;
+            if curved {
+                write!(line, "; post curve {}", tangent(knot.post_tangent)).unwrap();
+            } else {
+                write!(line, "; post {}", knot.next_interpolation.keyword()).unwrap();
+            }
+            if !knot.custom_data.is_empty() {
+                line.push_str("; ");
+                format_dictionary(&mut line, &knot.custom_data, false)?;
+            }
+            line.push(',');
+            self.write_line(&line)?;
+        }
         Ok(())
     }
 
-    fn write_extrapolation(&mut self, dir: &str, value: &Value) -> Result<(), FormatError> {
+    fn write_line(&mut self, line: &str) -> Result<(), FormatError> {
         self.write_indent()?;
-        match value {
-            Value::ValueBlock | Value::None => {
-                writeln!(self.out, "{dir}: none,")?;
-            }
-            Value::Dictionary(d) => {
-                let mode = match d.get("mode") {
-                    Some(Value::Token(t)) => t.as_str(),
-                    _ => "none",
-                };
-                let slope = match d.get("slope") {
-                    Some(Value::Double(s)) => *s,
-                    _ => 0.0,
-                };
-                if slope != 0.0 {
-                    let mut buf = String::new();
-                    format_double(&mut buf, slope);
-                    writeln!(self.out, "{dir}: {mode} ({buf}),")?;
-                } else {
-                    writeln!(self.out, "{dir}: {mode},")?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn write_loop(&mut self, d: &HashMap<String, Value>) -> Result<(), FormatError> {
-        let a = get_double(d, "protoStart");
-        let b = get_double(d, "protoEnd");
-        let c = get_double(d, "numPreLoops");
-        let e = get_double(d, "numPostLoops");
-        let g = get_double(d, "valueOffset");
-        self.write_indent()?;
-        let mut buf = String::new();
-        buf.push_str("loop: (");
-        format_double(&mut buf, a);
-        buf.push_str(", ");
-        format_double(&mut buf, b);
-        buf.push_str(", ");
-        format_double(&mut buf, c);
-        buf.push_str(", ");
-        format_double(&mut buf, e);
-        buf.push_str(", ");
-        format_double(&mut buf, g);
-        buf.push(')');
-        writeln!(self.out, "{buf},")?;
-        Ok(())
-    }
-
-    fn write_knot(
-        &mut self,
-        knot: &HashMap<String, Value>,
-        knot_custom: Option<&HashMap<String, Value>>,
-    ) -> Result<(), FormatError> {
-        let time = get_double(knot, "time");
-        let value = get_double(knot, "value");
-        let pre_value = get_double(knot, "preValue");
-        let pre_slope = get_double(knot, "preTangentSlope");
-        let pre_width = get_double(knot, "preTangentWidth");
-        let post_slope = get_double(knot, "postTangentSlope");
-        let post_width = get_double(knot, "postTangentWidth");
-        let interp = match knot.get("nextInterpolationMode") {
-            Some(Value::Token(t)) => t.as_str(),
-            _ => "held",
-        };
-
-        self.write_indent()?;
-        let mut buf = String::new();
-        format_double(&mut buf, time);
-        buf.push_str(": ");
-        if pre_value != 0.0 {
-            let mut pv = String::new();
-            format_double(&mut pv, pre_value);
-            buf.push_str(&pv);
-            buf.push_str(" & ");
-        }
-        format_double(&mut buf, value);
-
-        if pre_slope != 0.0 || pre_width != 0.0 {
-            buf.push_str("; pre (");
-            format_double(&mut buf, pre_slope);
-            buf.push_str(", ");
-            format_double(&mut buf, pre_width);
-            buf.push(')');
-        }
-
-        if interp != "held" || post_slope != 0.0 || post_width != 0.0 {
-            buf.push_str("; post ");
-            buf.push_str(interp);
-            if post_slope != 0.0 || post_width != 0.0 {
-                buf.push_str(" (");
-                format_double(&mut buf, post_slope);
-                buf.push_str(", ");
-                format_double(&mut buf, post_width);
-                buf.push(')');
-            }
-        }
-
-        let time_key = if time.fract() == 0.0 && time.is_finite() {
-            format!("{}", time as i64)
-        } else {
-            format!("{time}")
-        };
-        if let Some(Value::Dictionary(custom)) = knot_custom.and_then(|m| m.get(&time_key)) {
-            buf.push_str("; ");
-            let mut dict_str = String::new();
-            format_dictionary(&mut dict_str, custom)?;
-            buf.push_str(&dict_str);
-        }
-
-        buf.push(',');
-        writeln!(self.out, "{buf}")?;
+        writeln!(self.out, "{line}")?;
         Ok(())
     }
 
@@ -1021,7 +931,7 @@ fn format_value(s: &mut String, v: &Value) -> Result<(), FormatError> {
             Variability::Uniform => "uniform",
         }),
 
-        Value::Dictionary(dict) => format_dictionary(s, dict)?,
+        Value::Dictionary(dict) => format_dictionary(s, dict, true)?,
 
         Value::TokenListOp(op) => format_inline_listop(s, op, |s, t: &Token| write_quoted(s, t.as_str()))?,
         Value::StringListOp(op) => format_inline_listop(s, op, |s, t: &String| write_quoted(s, t))?,
@@ -1079,6 +989,12 @@ fn format_value(s: &mut String, v: &Value) -> Result<(), FormatError> {
             });
         }
 
+        Value::Spline(_) => {
+            return Err(FormatError::Encode {
+                reason: "a spline is written as its attribute's `.spline` statement, never as a value".into(),
+            });
+        }
+
         Value::LayerOffsetVec(offsets) => {
             format_vec(s, offsets, |s, o| {
                 format_layer_offset(s, o);
@@ -1086,7 +1002,6 @@ fn format_value(s: &mut String, v: &Value) -> Result<(), FormatError> {
             })?;
         }
 
-        Value::ValueVec(v) => format_vec(s, v, format_value)?,
         // An unregistered value is the literal a layer was written with,
         // recorded because nothing could type it. Quoting it would make it a
         // string; it is copied out as it came in.
@@ -1095,7 +1010,7 @@ fn format_value(s: &mut String, v: &Value) -> Result<(), FormatError> {
             s.push_str(body);
             Ok(())
         })?,
-        Value::UnregisteredDictionary(dict) => format_dictionary(s, dict)?,
+        Value::UnregisteredDictionary(dict) => format_dictionary(s, dict, true)?,
 
         Value::TimeCode(t) => format_double(s, t.0),
         Value::TimeCodeVec(v) => format_vec(s, v, |s, t| {
@@ -1267,13 +1182,6 @@ fn format_matrix(s: &mut String, m: &[f64], dim: usize) -> Result<(), FormatErro
 
 /// Looks up `key` in `dict` and returns its `Double` value, defaulting to `0.0`
 /// when the key is missing or holds a non-double.
-fn get_double(dict: &HashMap<String, Value>, key: &str) -> f64 {
-    match dict.get(key) {
-        Some(Value::Double(v)) => *v,
-        _ => 0.0,
-    }
-}
-
 fn format_double(s: &mut String, v: f64) {
     if v.is_nan() {
         s.push_str("nan");
@@ -1290,12 +1198,13 @@ fn format_double(s: &mut String, v: f64) {
     }
 }
 
-fn format_dictionary(s: &mut String, dict: &HashMap<String, Value>) -> Result<(), FormatError> {
+/// A dictionary over several lines, or on one (`{ int n = 3; string note = "x" }`)
+/// as C++ writes a spline knot's custom data.
+fn format_dictionary(s: &mut String, dict: &HashMap<String, Value>, multi_line: bool) -> Result<(), FormatError> {
     let mut keys: Vec<&String> = dict.keys().collect();
     keys.sort();
-    s.push('{');
-    s.push('\n');
-    for k in &keys {
+    s.push_str(if multi_line { "{\n" } else { "{ " });
+    for (i, k) in keys.iter().enumerate() {
         let value = &dict[k.as_str()];
         // A nested dictionary is introduced by the `dictionary` keyword; any
         // other entry carries the role-blind name of its value's kind, as C++
@@ -1306,7 +1215,11 @@ fn format_dictionary(s: &mut String, dict: &HashMap<String, Value>) -> Result<()
             Value::Dictionary(_) | Value::UnregisteredDictionary(_) => Some(Token::new("dictionary")),
             other => sdf::ValueKind::from(other).type_name().map(|ty| ty.as_token()),
         };
-        s.push_str("    ");
+        if multi_line {
+            s.push_str("    ");
+        } else if i > 0 {
+            s.push_str("; ");
+        }
         if let Some(ty) = type_name {
             s.push_str(ty.as_str());
             s.push(' ');
@@ -1318,10 +1231,91 @@ fn format_dictionary(s: &mut String, dict: &HashMap<String, Value>) -> Result<()
         }
         s.push_str(" = ");
         format_value(s, value)?;
-        s.push('\n');
+        if multi_line {
+            s.push('\n');
+        }
     }
-    s.push('}');
+    s.push_str(if multi_line { "}" } else { " }" });
     Ok(())
+}
+
+/// A number as C++ `TfStringify` writes a `double`: the shortest digits that
+/// read back to it, in decimal from 1e-6 up to 1e15 and in exponent form
+/// outside that (double-conversion's `ToShortest` with those bounds).
+fn stringify(v: f64) -> String {
+    shortest(v, format!("{v:e}"))
+}
+
+/// A number as C++ `TfStringify` writes a `float`: the shortest digits that
+/// read back to it as a `float`.
+fn stringify_f32(v: f32) -> String {
+    shortest(f64::from(v), format!("{v:e}"))
+}
+
+/// Lays out shortest digits, given in Rust's exponent form (`-1.25e-7`), as
+/// double-conversion does with `decimal_in_shortest_low` -6 and
+/// `decimal_in_shortest_high` 15: no `+` on an exponent and no trailing `.0`.
+fn shortest(v: f64, exponent_form: String) -> String {
+    if v.is_nan() {
+        return "nan".into();
+    }
+    if v.is_infinite() {
+        return if v > 0.0 { "inf" } else { "-inf" }.into();
+    }
+    let (mantissa, exponent) = exponent_form.split_once('e').expect("{:e} writes an exponent");
+    let exponent: i32 = exponent.parse().expect("{:e} writes an integer exponent");
+    let (sign, mantissa) = mantissa.strip_prefix('-').map_or(("", mantissa), |m| ("-", m));
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let decimal_point = exponent + 1;
+    let n = digits.len() as i32;
+    let body = if (-6..15).contains(&exponent) {
+        if decimal_point <= 0 {
+            format!("0.{}{digits}", "0".repeat((-decimal_point) as usize))
+        } else if decimal_point >= n {
+            format!("{digits}{}", "0".repeat((decimal_point - n) as usize))
+        } else {
+            let (whole, fraction) = digits.split_at(decimal_point as usize);
+            format!("{whole}.{fraction}")
+        }
+    } else if n == 1 {
+        format!("{digits}e{exponent}")
+    } else {
+        format!("{}.{}e{exponent}", &digits[..1], &digits[1..])
+    };
+    format!("{sign}{body}")
+}
+
+/// A half as C++ writes it, through `std::ostream` at its default precision:
+/// `%g` with six significant digits.
+fn stringify_half(v: f64) -> String {
+    if !v.is_finite() {
+        return stringify(v);
+    }
+    let rounded = format!("{v:.5e}");
+    let (mantissa, exponent) = rounded.split_once('e').expect("{:e} writes an exponent");
+    let exponent: i32 = exponent.parse().expect("{:e} writes an integer exponent");
+    let trim = |s: String| {
+        if s.contains('.') {
+            s.trim_end_matches('0').trim_end_matches('.').to_owned()
+        } else {
+            s
+        }
+    };
+    if (-4..6).contains(&exponent) {
+        trim(format!("{v:.*}", (5 - exponent) as usize))
+    } else {
+        let sign = if exponent < 0 { '-' } else { '+' };
+        format!("{}e{sign}{:02}", trim(mantissa.to_owned()), exponent.abs())
+    }
+}
+
+/// A spline value, written at the precision of its attribute's type.
+fn stringify_spline_value(value_type: sdf::SplineValueType, v: f64) -> String {
+    match value_type {
+        sdf::SplineValueType::Double => stringify(v),
+        sdf::SplineValueType::Float => stringify_f32(v as f32),
+        sdf::SplineValueType::Half => stringify_half(v),
+    }
 }
 
 /// A dictionary key can be emitted unquoted only when it tokenizes as a USDA
@@ -1418,7 +1412,7 @@ fn write_arc_metadata(
     }
     if !custom_data.is_empty() {
         let mut part = String::from("customData = ");
-        format_dictionary(&mut part, custom_data)?;
+        format_dictionary(&mut part, custom_data, true)?;
         parts.push(part);
     }
     if !parts.is_empty() {

@@ -162,7 +162,6 @@ pub(super) fn visit_asset_paths(
                 | Value::AssetPathVec(_)
                 | Value::Dictionary(_)
                 | Value::UnregisteredDictionary(_)
-                | Value::ValueVec(_)
                 | Value::TimeSamples(_)
                 | Value::ReferenceListOp(_)
                 | Value::PayloadListOp(_)
@@ -342,12 +341,6 @@ impl Walk<'_> {
                 had && assets.is_empty()
             }
             Value::Dictionary(entries) | Value::UnregisteredDictionary(entries) => self.dictionary(entries, None)?,
-            Value::ValueVec(values) => {
-                for value in values {
-                    self.value(value)?;
-                }
-                false
-            }
             Value::TimeSamples(samples) => {
                 let had = !samples.is_empty();
                 self.retain(samples, |walk, (_, value)| walk.value(value))?;

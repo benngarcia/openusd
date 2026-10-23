@@ -520,13 +520,13 @@ impl<'a> Parser<'a> {
         if matches!(suffix, Some(Token::Spline)) {
             push_unique(suffixed_properties, name);
             self.cursor.expect_punctuation('=')?;
-            let spline = types::parse_spline(&mut self.cursor)?;
+            let spline = types::parse_spline(&mut self.cursor, &type_name)?;
             let path = current_path.append_property(name)?;
 
             let spec = data
                 .entry(path)
                 .or_insert_with(|| Self::make_attribute_spec(&type_name, custom, variability));
-            spec.add("spline", spline);
+            spec.add("spline", sdf::Value::Spline(spline));
             return Ok(());
         }
 

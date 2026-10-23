@@ -155,8 +155,8 @@ pub enum Value {
     #[from(skip)]
     Value,
 
-    /// Heterogeneous array (e.g. spline knots). Each element is a `Value`.
-    ValueVec(Vec<Value>),
+    /// A spline-valued attribute's curve (C++ `TsSpline`).
+    Spline(Spline),
 
     #[from(skip)]
     UnregisteredValue(String),
@@ -301,7 +301,7 @@ impl serde::Serialize for Value {
             Value::VariantSelectionMap(v) => v.serialize(serializer),
             Value::LayerOffsetVec(v) => v.serialize(serializer),
 
-            Value::ValueVec(v) => v.serialize(serializer),
+            Value::Spline(v) => v.serialize(serializer),
 
             Value::UnregisteredValue(v) => v.serialize(serializer),
             Value::UnregisteredValueListOp(v) => v.serialize(serializer),
@@ -345,7 +345,6 @@ impl Value {
             // no row for: these carry metadata rather than a value's elements.
             Value::PathVec(items) => Some(items.len()),
             Value::LayerOffsetVec(items) => Some(items.len()),
-            Value::ValueVec(items) => Some(items.len()),
             value => value.attribute_array_len(),
         }
     }
@@ -404,7 +403,6 @@ impl Value {
         match self {
             Value::TimeCode(_) | Value::TimeCodeVec(_) | Value::TimeSamples(_) => true,
             Value::Dictionary(entries) => entries.values().any(Value::holds_time_codes),
-            Value::ValueVec(values) => values.iter().any(Value::holds_time_codes),
             _ => false,
         }
     }
@@ -418,7 +416,6 @@ impl Value {
         match self {
             Value::PathExpression(_) | Value::PathExpressionVec(_) => true,
             Value::Dictionary(entries) => entries.values().any(Value::holds_path_expressions),
-            Value::ValueVec(values) => values.iter().any(Value::holds_path_expressions),
             Value::TimeSamples(samples) => samples.iter().any(|(_, value)| value.holds_path_expressions()),
             _ => false,
         }
@@ -461,9 +458,6 @@ impl Value {
                     .map(|(key, value)| (key, value.map_path_expressions(f)))
                     .collect(),
             ),
-            Value::ValueVec(values) => {
-                Value::ValueVec(values.into_iter().map(|value| value.map_path_expressions(f)).collect())
-            }
             Value::TimeSamples(samples) => Value::TimeSamples(
                 samples
                     .into_iter()
@@ -493,9 +487,6 @@ impl Value {
                     .map(|(key, value)| (key, value.map_asset_paths(f)))
                     .collect(),
             ),
-            Value::ValueVec(values) => {
-                Value::ValueVec(values.into_iter().map(|value| value.map_asset_paths(f)).collect())
-            }
             Value::TimeSamples(samples) => Value::TimeSamples(
                 samples
                     .into_iter()

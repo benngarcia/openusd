@@ -549,7 +549,7 @@ fn array_bytes(value: &sdf::Value) -> Option<usize> {
         V::Matrix4dVec(v) => mem::size_of_val(v.as_slice()),
         V::PathVec(v) => mem::size_of_val(v.as_slice()),
         V::LayerOffsetVec(v) => mem::size_of_val(v.as_slice()),
-        V::ValueVec(v) => mem::size_of_val(v.as_slice()),
+        V::Spline(v) => mem::size_of_val(v.knots()),
         V::TimeCodeVec(v) => mem::size_of_val(v.as_slice()),
         V::PathExpressionVec(v) => mem::size_of_val(v.as_slice()),
         _ => return None,

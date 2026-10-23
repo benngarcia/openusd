@@ -1587,6 +1587,26 @@ impl<'a> Decoder<'a> {
                 sdf::Value::Relocates(pairs)
             }
 
+            Type::Spline => {
+                corrupt!(!value.is_inlined());
+                self.stream.seek(value.payload())?;
+                let len = self.stream.read_count()?;
+                let blob = self.stream.take(len)?;
+                // A spline with no data at all is C++'s default spline, whose
+                // values are doubles.
+                let mut spline = sdf::Spline::from_binary(blob, sdf::SplineValueType::Double)
+                    .map_err(|e| ReadError::corrupt(format!("spline: {e}")))?;
+                let count = self.stream.read_count()?;
+                for _ in 0..count {
+                    let time: f64 = self.stream.read_pod()?;
+                    let custom_data = self.read_custom_data()?;
+                    spline
+                        .set_custom_data(time, custom_data)
+                        .map_err(|e| ReadError::corrupt(format!("spline: {e}")))?;
+                }
+                sdf::Value::Spline(spline)
+            }
+
             Type::Invalid => return Err(ReadError::unsupported(format!("Unsupported value type: {ty}"))),
         };
 

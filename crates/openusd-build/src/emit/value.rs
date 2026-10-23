@@ -209,7 +209,7 @@ pub(super) fn value_expr(value: &sdf::Value) -> Result<TokenStream, sdf::ValueKi
         // resolution.
         sdf::Value::None
         | sdf::Value::Value
-        | sdf::Value::ValueVec(_)
+        | sdf::Value::Spline(_)
         | sdf::Value::Specifier(_)
         | sdf::Value::Permission(_)
         | sdf::Value::Variability(_)

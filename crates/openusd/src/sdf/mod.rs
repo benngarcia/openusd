@@ -28,6 +28,7 @@ mod path_table;
 pub mod schema;
 pub mod sink;
 mod spec;
+mod spline;
 mod token_value;
 mod unit;
 mod value;
@@ -71,6 +72,7 @@ pub use spec::{
     PropertySpecMut, PropertySpecRef, PseudoRootSpec, PseudoRootSpecMut, PseudoRootSpecRef, RelationshipSpec,
     RelationshipSpecMut, RelationshipSpecRef, Spec, SpecData, SpecError, SpecMut, SpecRef, SpecType,
 };
+pub use spline::{CurveType, Extrapolation, Interpolation, Knot, LoopParams, Spline, SplineValueType, Tangent};
 pub use unit::{Unit, UnitCategory};
 pub use value::{CastError, FromValue, FromValueCast, Value, ValueKind, dictionary_over};
 pub use value_type::{Dimensions, Role, ValueTypeError, ValueTypeName};
@@ -232,11 +234,6 @@ impl LayerOffset {
             Value::Dictionary(entries) => {
                 for entry in entries.values_mut() {
                     self.apply_to_value(entry);
-                }
-            }
-            Value::ValueVec(values) => {
-                for value in values {
-                    self.apply_to_value(value);
                 }
             }
             _ => {}

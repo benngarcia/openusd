@@ -470,7 +470,7 @@ macro_rules! array_pairs {
             }
 
             /// The element kind of this array kind; `None` for a scalar and for
-            /// every kind that is not an attribute array (`PathVec`, `ValueVec`
+            /// every kind that is not an attribute array (`PathVec`
             /// and `LayerOffsetVec` hold metadata, not attribute values).
             pub const fn element_kind(self) -> Option<ValueKind> {
                 match self {
