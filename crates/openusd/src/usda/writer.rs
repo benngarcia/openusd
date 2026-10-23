@@ -655,6 +655,13 @@ impl<W: Write> Emitter<'_, W> {
             return Ok(());
         }
 
+        // A bool field (`active`, `hidden`, `instanceable`) is written as a
+        // word; a bool value elsewhere streams as an int.
+        if let Value::Bool(b) = value {
+            writeln!(self.out, "{b}")?;
+            return Ok(());
+        }
+
         self.write_value(value)?;
         writeln!(self.out)?;
         Ok(())
@@ -840,7 +847,8 @@ fn format_value(s: &mut String, v: &Value) -> Result<(), FormatError> {
         }
         Value::ValueBlock => s.push_str("None"),
 
-        Value::Bool(b) => s.push_str(if *b { "true" } else { "false" }),
+        // C++ streams a bool as an int (`VtStreamOut(bool const &)`).
+        Value::Bool(b) => s.push_str(if *b { "1" } else { "0" }),
         Value::BoolVec(v) => format_vec(s, v, |s, b| {
             s.push_str(if *b { "true" } else { "false" });
             Ok(())
@@ -857,14 +865,14 @@ fn format_value(s: &mut String, v: &Value) -> Result<(), FormatError> {
         Value::Uint64(n) => write!(s, "{n}")?,
         Value::Uint64Vec(v) => format_vec(s, v, |s, n| write!(s, "{n}").map_err(Into::into))?,
 
-        Value::Half(h) => format_double(s, h.to_f64()),
+        Value::Half(h) => format_half(s, *h),
         Value::HalfVec(v) => format_vec(s, v, |s, h| {
-            format_double(s, h.to_f64());
+            format_half(s, *h);
             Ok(())
         })?,
-        Value::Float(f) => format_double(s, f64::from(*f)),
+        Value::Float(f) => format_float(s, *f),
         Value::FloatVec(v) => format_vec(s, v, |s, f| {
-            format_double(s, f64::from(*f));
+            format_float(s, *f);
             Ok(())
         })?,
         Value::Double(d) => format_double(s, *d),
@@ -1120,7 +1128,7 @@ fn format_tuple_half<const N: usize>(s: &mut String, a: &[crate::gf::f16; N]) ->
         if i > 0 {
             s.push_str(", ");
         }
-        format_double(s, v.to_f64());
+        format_half(s, *v);
     }
     s.push(')');
     Ok(())
@@ -1132,7 +1140,7 @@ fn format_tuple_f32<const N: usize>(s: &mut String, a: &[f32; N]) -> Result<(), 
         if i > 0 {
             s.push_str(", ");
         }
-        format_double(s, f64::from(*v));
+        format_float(s, *v);
     }
     s.push(')');
     Ok(())
@@ -1162,8 +1170,10 @@ fn format_tuple_int<const N: usize>(s: &mut String, a: &[i32; N]) -> Result<(), 
     Ok(())
 }
 
+/// A matrix as C++ streams one (`operator<<(std::ostream&, GfMatrix4d)`):
+/// `( (a, b), (c, d) )`.
 fn format_matrix(s: &mut String, m: &[f64], dim: usize) -> Result<(), FormatError> {
-    s.push('(');
+    s.push_str("( ");
     for row in 0..dim {
         if row > 0 {
             s.push_str(", ");
@@ -1177,26 +1187,26 @@ fn format_matrix(s: &mut String, m: &[f64], dim: usize) -> Result<(), FormatErro
         }
         s.push(')');
     }
-    s.push(')');
+    s.push_str(" )");
     Ok(())
 }
 
 /// Looks up `key` in `dict` and returns its `Double` value, defaulting to `0.0`
 /// when the key is missing or holds a non-double.
+/// A double as C++ writes one (`TfStringify(double)`).
 fn format_double(s: &mut String, v: f64) {
-    if v.is_nan() {
-        s.push_str("nan");
-    } else if v.is_infinite() {
-        s.push_str(if v > 0.0 { "inf" } else { "-inf" });
-    } else if v.fract() == 0.0 && v.is_finite() && v.abs() < 1e16 {
-        // Integer-valued floats need an explicit `.0` to re-parse as a float
-        // rather than an int in type-free contexts (time samples, dict entries).
-        let as_int = v as i64;
-        write!(s, "{as_int}.0").unwrap();
-    } else {
-        // Ryu-backed shortest round-trip.
-        write!(s, "{v}").unwrap();
-    }
+    s.push_str(&stringify(v));
+}
+
+/// A float as C++ writes one (`TfStringify(float)`), at float precision:
+/// `0.65`, not `0.6499999761581421`.
+fn format_float(s: &mut String, v: f32) {
+    s.push_str(&stringify_f32(v));
+}
+
+/// A half as C++ streams one, through `std::ostream`.
+fn format_half(s: &mut String, v: crate::gf::f16) {
+    s.push_str(&stringify_half(v.to_f64()));
 }
 
 /// A dictionary over several lines, or on one (`{ int n = 3; string note = "x" }`)
