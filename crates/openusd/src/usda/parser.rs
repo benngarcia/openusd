@@ -3246,4 +3246,20 @@ def \"Q\" (
             assert!(Parser::new(&text).parse().is_err(), "{attribute}");
         }
     }
+
+    // A property declared only by a suffixed statement keeps its place among
+    // the others, as C++ records properties in the order they first appear.
+    #[test]
+    fn suffixed_properties_keep_their_place() {
+        let text = "#usda 1.0\ndef \"p\" {\n    token a = \"x\"\n    float3 b.connect = </q.out>\n    double c.timeSamples = { 1: 2 }\n    float d = 1\n}\n";
+        let data = Parser::new(text).parse().unwrap();
+        let spec = data.get(&sdf::path("/p").unwrap()).unwrap();
+        let names = spec
+            .get(ChildrenKey::PropertyChildren.as_str())
+            .unwrap()
+            .try_as_token_vec_ref()
+            .unwrap();
+        let names: Vec<&str> = names.iter().map(|t| t.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c", "d"]);
+    }
 }
