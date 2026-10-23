@@ -131,8 +131,14 @@ fn cross_typed_timesamples() {
     assert_cross("typed_timesamples", Path::new("fixtures/typed_timesamples.usda"));
 }
 
+// Splines OpenUSD wrote, of every value type, curve type and extrapolation.
+#[test]
+fn cross_splines() {
+    assert_cross("splines", Path::new("fixtures/splines.usda"));
+}
+
 // Skipped fixtures:
 //   - `attributes.usda`: authors bare scalars as `vector3f` time samples, which
 //     the parser rejects (see `attributes_malformed` in `text_format`).
-//   - `splines.usda`: splines materialise as `Value::ValueVec`, which the USDC
-//     writer rejects (no native heterogeneous-array type).
+//   - `splines.usda`: OpenUSD refuses it, and so does the parser; see
+//     `cross_splines` and `tests/splines.rs`.

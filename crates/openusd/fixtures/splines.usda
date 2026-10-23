@@ -1,0 +1,45 @@
+#usda 1.0
+
+over "Splines"
+{
+    double curves.spline = {
+        bezier,
+        pre: linear,
+        post: sloped(-0.25),
+        -20: 1e15; pre (0.5, 2); post curve (1.5, 1e-7),
+        0: 0.000001; pre (1, 0.000123); post linear,
+        7.25: 0.3333333333333333; post curve (2, -0),
+        30: 1.5e300; pre (3, 2.5e-300); post held,
+    }
+    double empty.spline = {
+    }
+    uniform double hermite.spline = {
+        hermite,
+        3: 2 & 4; pre (0); post curve (0.5); { int n = 3; string note = "x" },
+        5: 1; pre (0); post none,
+        8: 2; post held,
+    }
+    double looped.spline = {
+        bezier,
+        loop: (10, 20, 1, 2, 0.5),
+        10: 0; pre (0, 0); post curve (1, 1),
+        15: 5; pre (1, 1); post curve (1, 1),
+        20: 0; pre (0, 0); post linear,
+    }
+    float rotateZ.spline = {
+        bezier,
+        pre: loop reset,
+        post: loop repeat,
+        1: 0; pre (33.333333, 3.6000001); post curve (16, 52.5),
+        49: 12.5 & 2520; pre (0, 0); post linear,
+        101: 360; post linear,
+    }
+    half weight.spline = {
+        bezier,
+        pre: none,
+        post: loop oscillate,
+        0.1: 0.333252; pre (0, 0); post curve (1, 1000.5),
+        4.6: 0.000100017; pre (1, 65504); post held,
+    }
+}
+

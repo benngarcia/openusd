@@ -3189,105 +3189,69 @@ def \"Q\" (
         assert_eq!(spec.get("displayName"), Some(&sdf::Value::String("\u{1F680}".into())));
     }
 
+    fn parse_spline_of(attribute: &str) -> sdf::Spline {
+        let text = format!("#usda 1.0\ndef \"p\" {{\n    {attribute}\n}}\n");
+        let data = Parser::new(&text).parse().unwrap();
+        let value = data.get(&sdf::path("/p.x").unwrap()).unwrap().get("spline").unwrap();
+        value.try_as_spline_ref().unwrap().clone()
+    }
+
     #[test]
     fn parse_spline_empty() {
-        let parser = Parser::new(
-            r#"#usda 1.0
-def "p" { double x.spline = {} }
-"#,
-        );
-        let data = parser.parse().unwrap();
-        let d = data
-            .get(&sdf::path("/p.x").unwrap())
-            .unwrap()
-            .get("spline")
-            .unwrap()
-            .try_as_dictionary_ref()
-            .unwrap();
-        assert_eq!(d.get("curveType"), Some(&sdf::Value::Token("bezier".into())));
-        assert_eq!(d.get("preExtrapolation"), Some(&sdf::Value::ValueBlock));
-        assert!(d.get("knots").unwrap().try_as_value_vec_ref().unwrap().is_empty());
+        let spline = parse_spline_of("double x.spline = {}");
+        assert_eq!(spline, sdf::Spline::new(sdf::SplineValueType::Double));
     }
 
+    // A Bezier tangent is `(width, slope)` and a Hermite one its slope alone,
+    // as C++ writes them; values take the attribute's precision.
     #[test]
-    fn parse_spline_knot_with_tangents() {
-        let parser = Parser::new(
-            r#"#usda 1.0
-def "p" {
-    float x.spline = {
-        hermite,
-        10 : 5.0 ; pre (1.0, 2.0) ; post curve (3.0, 4.0)
-    }
-}
-"#,
-        );
-        let data = parser.parse().unwrap();
-        let d = data
-            .get(&sdf::path("/p.x").unwrap())
-            .unwrap()
-            .get("spline")
-            .unwrap()
-            .try_as_dictionary_ref()
-            .unwrap();
-        assert_eq!(d.get("curveType"), Some(&sdf::Value::Token("hermite".into())));
+    fn parse_spline_tangents() {
+        let spline = parse_spline_of("float x.spline = { 10: 0.1; pre (1, 2); post curve (3, 4.5), 20: 1; post held }");
+        let knot = &spline.knots()[0];
+        assert_eq!(knot.value, f64::from(0.1_f32));
+        assert_eq!(knot.pre_tangent, sdf::Tangent { width: 1.0, slope: 2.0 });
+        assert_eq!(knot.post_tangent, sdf::Tangent { width: 3.0, slope: 4.5 });
+        assert_eq!(knot.next_interpolation, sdf::Interpolation::Curve);
 
-        let knots = d.get("knots").unwrap().try_as_value_vec_ref().unwrap();
-        assert_eq!(knots.len(), 1);
-
-        let knot = knots[0].try_as_dictionary_ref().unwrap();
-        assert_eq!(knot.get("time"), Some(&sdf::Value::Double(10.0)));
-        assert_eq!(knot.get("value"), Some(&sdf::Value::Double(5.0)));
-        assert_eq!(knot.get("preTangentSlope"), Some(&sdf::Value::Double(1.0)));
-        assert_eq!(knot.get("preTangentWidth"), Some(&sdf::Value::Double(2.0)));
-        assert_eq!(knot.get("postTangentSlope"), Some(&sdf::Value::Double(3.0)));
-        assert_eq!(knot.get("postTangentWidth"), Some(&sdf::Value::Double(4.0)));
-        assert_eq!(
-            knot.get("nextInterpolationMode"),
-            Some(&sdf::Value::Token("curve".into()))
-        );
+        let spline = parse_spline_of("double x.spline = { hermite, 10: 5; pre (2); post curve (4) }");
+        assert_eq!(spline.curve_type, sdf::CurveType::Hermite);
+        assert_eq!(spline.knots()[0].post_tangent, sdf::Tangent { width: 0.0, slope: 4.0 });
     }
 
+    // `loop reset` is one extrapolation mode, not `loop` and an entry `reset`.
     #[test]
     fn parse_spline_extrapolation_and_loop() {
-        let parser = Parser::new(
-            r#"#usda 1.0
-def "p" {
-    double x.spline = {
-        pre: sloped (2.5),
-        post: clamp,
-        loop: (1.0, 10.0, 0, 3, 0.5),
-        5 : 1.0 & 9.0
-    }
-}
-"#,
+        let spline = parse_spline_of(
+            "double x.spline = { pre: loop reset, post: sloped(2.5), loop: (1, 10, 0, 3, 0.5), 5: 1 & 9, 1: 0 }",
         );
-        let data = parser.parse().unwrap();
-        let d = data
-            .get(&sdf::path("/p.x").unwrap())
-            .unwrap()
-            .get("spline")
-            .unwrap()
-            .try_as_dictionary_ref()
-            .unwrap();
+        assert_eq!(spline.pre_extrapolation, sdf::Extrapolation::LoopReset);
+        assert_eq!(spline.post_extrapolation, sdf::Extrapolation::Sloped(2.5));
+        assert_eq!(
+            spline.inner_loops,
+            Some(sdf::LoopParams {
+                proto_start: 1.0,
+                proto_end: 10.0,
+                num_pre_loops: 0,
+                num_post_loops: 3,
+                value_offset: 0.5
+            })
+        );
+        // Knots are kept in time order; `5: 1 & 9` has pre-value 1 and value 9.
+        let times: Vec<f64> = spline.knots().iter().map(|k| k.time).collect();
+        assert_eq!(times, [1.0, 5.0]);
+        assert_eq!(spline.knots()[1].pre_value, Some(1.0));
+        assert_eq!(spline.knots()[1].value, 9.0);
+    }
 
-        let pre = d.get("preExtrapolation").unwrap().try_as_dictionary_ref().unwrap();
-        assert_eq!(pre.get("mode"), Some(&sdf::Value::Token("sloped".into())));
-        assert_eq!(pre.get("slope"), Some(&sdf::Value::Double(2.5)));
-
-        let post = d.get("postExtrapolation").unwrap().try_as_dictionary_ref().unwrap();
-        assert_eq!(post.get("mode"), Some(&sdf::Value::Token("clamp".into())));
-        assert_eq!(post.get("slope"), Some(&sdf::Value::Double(0.0)));
-
-        let lp = d.get("loopParameters").unwrap().try_as_dictionary_ref().unwrap();
-        assert_eq!(lp.get("protoStart"), Some(&sdf::Value::Double(1.0)));
-        assert_eq!(lp.get("numPostLoops"), Some(&sdf::Value::Double(3.0)));
-        assert_eq!(lp.get("valueOffset"), Some(&sdf::Value::Double(0.5)));
-
-        // `5 : 1.0 & 9.0` — preValue is 1.0, value is 9.0.
-        let knot = d.get("knots").unwrap().try_as_value_vec_ref().unwrap()[0]
-            .try_as_dictionary_ref()
-            .unwrap();
-        assert_eq!(knot.get("preValue"), Some(&sdf::Value::Double(1.0)));
-        assert_eq!(knot.get("value"), Some(&sdf::Value::Double(9.0)));
+    #[test]
+    fn parse_spline_refuses_what_it_cannot_keep() {
+        for attribute in [
+            "int x.spline = {}",
+            "double x.spline = { 1: 0; pre (1, 0, autoEase) }",
+            "double x.spline = { post: loop repeat(5) }",
+        ] {
+            let text = format!("#usda 1.0\ndef \"p\" {{\n    {attribute}\n}}\n");
+            assert!(Parser::new(&text).parse().is_err(), "{attribute}");
+        }
     }
 }

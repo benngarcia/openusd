@@ -35,7 +35,7 @@ that broader spec behavior can be considered fully covered.
 | Core metadata fields (attribute spec) | `7.6.3` | :white_check_mark: | `0.1.2` | typeName, default, timeSamples, connectionPaths, variability, custom |
 | Core metadata fields (relationship spec) | `7.6.4` | :white_check_mark: | `0.1.2` | targetPaths, variability, custom |
 | Core metadata fields (variant set/variant spec) | `7.6.5-7` | :white_check_mark: | `0.2.0` | |
-| Spline specialized type | `7.4.2.4` | :construction: | | A USDA `.spline` block round-trips as a dictionary (`usda::types::parse_spline`)<br>Remaining — typed knots, interpolation and extrapolation; USDC encoding; evaluation during value resolution; authoring |
+| Spline specialized type | `7.4.2.4` | :construction: | | A spline is a typed `sdf::Spline` (knots, interpolation, extrapolation, inner loops), read and written in USDA as OpenUSD writes it and in USDC as spline data version 1 (crate 0.12.0)<br>Remaining — tangent algorithms and loop boundary times (usda 1.1 and 1.3, crate 0.13.0 and 0.15.0); evaluation during value resolution; authoring |
 | Retiming specialized type ([layer offsets](https://openusd.org/release/glossary.html#usdglossary-layeroffset)) | `7.6.1.2.2` | :white_check_mark: | `0.1.2` | `0.1.2` — parsed from `subLayerOffsets`<br>`0.4.0` — composed through arcs<br>`0.5.0` — applied during value resolution (§12.3.2.1) |
 
 ## Paths (Spec 8)

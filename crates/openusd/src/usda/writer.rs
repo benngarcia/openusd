@@ -334,13 +334,12 @@ impl<W: Write> Emitter<'_, W> {
             self.write_line(&format!("{},", spline.curve_type.keyword()))?;
         }
         for (side, extrapolation) in [("pre", spline.pre_extrapolation), ("post", spline.post_extrapolation)] {
-            match extrapolation {
-                sdf::Extrapolation::Held => {}
-                sdf::Extrapolation::Sloped(slope) => {
-                    self.write_line(&format!("{side}: sloped({}),", stringify(slope)))?
-                }
-                other => self.write_line(&format!("{side}: {},", other.keyword()))?,
-            }
+            let line = match extrapolation {
+                sdf::Extrapolation::Held => continue,
+                sdf::Extrapolation::Sloped(slope) => format!("{side}: sloped({}),", stringify(slope)),
+                other => format!("{side}: {},", other.keyword()),
+            };
+            self.write_line(&line)?;
         }
         if let Some(lp) = spline.inner_loops {
             self.write_line(&format!(
@@ -1444,8 +1443,9 @@ fn children(data: &dyn AbstractData, path: &Path, key: ChildrenKey) -> Vec<Token
 
 // Field classifiers. Match C++ `Sdf_Is{Prim,Attribute,Relationship}MetadataField`.
 
-/// `spline` names the in-memory spline dictionary slot but isn't yet defined
-/// in [`FieldKey`]. Keep it local until promoted into the schema.
+/// `spline` names the field an attribute's [`sdf::Spline`] is stored in, which
+/// isn't yet defined in [`FieldKey`]. Keep it local until promoted into the
+/// schema.
 const SPLINE_FIELD: &str = "spline";
 
 const PRIM_STRUCTURAL_FIELDS: &[&str] = &[

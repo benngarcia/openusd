@@ -230,7 +230,13 @@ mod text_parser {
         assert_text_format("dictionaries");
     }
 
+    // The baseline reads a Bezier tangent as `(slope, width)`; OpenUSD writes
+    // and reads `(width, slope)`. OpenUSD 26.11 also refuses this asset: a
+    // negative tangent width, a float knot value beyond float range, and a
+    // Hermite tangent with a width. Splines are checked against OpenUSD's
+    // own output in `tests/splines.rs`.
     #[test]
+    #[ignore = "baseline reads tangents as (slope, width), and OpenUSD refuses the asset; see tests/splines.rs"]
     fn test_splines() {
         assert_text_format("splines");
     }

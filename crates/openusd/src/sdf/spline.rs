@@ -131,16 +131,33 @@ impl Spline {
     }
 
     /// Adds a knot, replacing any at the same time, with its values rounded
-    /// to the spline's value type.
-    pub fn set_knot(&mut self, mut knot: Knot) {
-        knot.value = self.value_type.round(knot.value);
-        knot.pre_value = knot.pre_value.map(|v| self.value_type.round(v));
-        knot.pre_tangent.slope = self.value_type.round(knot.pre_tangent.slope);
-        knot.post_tangent.slope = self.value_type.round(knot.post_tangent.slope);
+    /// to the spline's value type. Like C++ `TsKnot`, it refuses a value or
+    /// slope the type cannot hold finitely and a negative tangent width.
+    pub fn set_knot(&mut self, mut knot: Knot) -> Result<(), String> {
+        let round = |v: f64| {
+            let rounded = self.value_type.round(v);
+            match rounded.is_finite() {
+                true => Ok(rounded),
+                false => Err(format!(
+                    "knot at time {}: {v} is not a finite {:?}",
+                    knot.time, self.value_type
+                )),
+            }
+        };
+        let value = round(knot.value)?;
+        let pre_value = knot.pre_value.map(round).transpose()?;
+        let pre_slope = round(knot.pre_tangent.slope)?;
+        let post_slope = round(knot.post_tangent.slope)?;
+        if knot.pre_tangent.width < 0.0 || knot.post_tangent.width < 0.0 {
+            return Err(format!("knot at time {}: a tangent width is negative", knot.time));
+        }
+        (knot.value, knot.pre_value) = (value, pre_value);
+        (knot.pre_tangent.slope, knot.post_tangent.slope) = (pre_slope, post_slope);
         match self.knots.binary_search_by(|k| k.time.total_cmp(&knot.time)) {
             Ok(at) => self.knots[at] = knot,
             Err(at) => self.knots.insert(at, knot),
         }
+        Ok(())
     }
 
     /// Whether any segment between two knots is a curve (C++

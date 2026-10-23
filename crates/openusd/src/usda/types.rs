@@ -408,7 +408,9 @@ pub(super) fn parse_spline(cursor: &mut Cursor<'_>, ty: &sdf::ValueTypeName) -> 
                     value_offset,
                 });
             }
-            Token::Number(time) => spline.set_knot(parse_knot(c, time.parse()?, spline.curve_type)?),
+            Token::Number(time) => spline
+                .set_knot(parse_knot(c, time.parse()?, spline.curve_type)?)
+                .map_err(RawError::new)?,
             other => bail!("Unexpected spline token: {other:?}"),
         }
         Ok(())
@@ -460,8 +462,8 @@ fn parse_knot(cursor: &mut Cursor<'_>, time: f64, curve_type: sdf::CurveType) ->
     Ok(knot)
 }
 
-/// A tangent: `(width, slope)`, or `(slope)` on a Hermite curve, whose widths
-/// are fixed.
+/// A tangent: `(width, slope)` on a Bezier curve, `(slope)` on a Hermite
+/// one, whose widths are fixed.
 fn parse_tangent(cursor: &mut Cursor<'_>, curve_type: sdf::CurveType) -> Result<sdf::Tangent, RawError> {
     let mut numbers = Vec::new();
     parse_block(cursor, '(', ')', |c| {
@@ -473,8 +475,8 @@ fn parse_tangent(cursor: &mut Cursor<'_>, curve_type: sdf::CurveType) -> Result<
     })?;
     Ok(match (curve_type, numbers.as_slice()) {
         (sdf::CurveType::Hermite, &[slope]) => sdf::Tangent { width: 0.0, slope },
-        (_, &[width, slope]) => sdf::Tangent { width, slope },
-        _ => bail!("a spline tangent is (width, slope), or (slope) on a Hermite curve"),
+        (sdf::CurveType::Bezier, &[width, slope]) => sdf::Tangent { width, slope },
+        _ => bail!("a spline tangent is (width, slope) on a Bezier curve and (slope) on a Hermite one"),
     })
 }
 

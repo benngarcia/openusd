@@ -137,7 +137,10 @@ fn roundtrip_geometryattributes() {
     assert_roundtrip("geometryattributes");
 }
 
+// OpenUSD refuses this asset (see `test_splines` in `tests/text_format.rs`);
+// `tests/splines.rs` round-trips splines OpenUSD wrote.
 #[test]
+#[ignore = "OpenUSD refuses the vendor splines asset; see tests/splines.rs"]
 fn roundtrip_splines() {
     assert_roundtrip("splines");
 }
