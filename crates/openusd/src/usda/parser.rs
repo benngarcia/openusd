@@ -538,7 +538,10 @@ impl<'a> Parser<'a> {
         }
 
         self.cursor.expect_punctuation('=')?;
-        let value = types::parse_value(&mut self.cursor, &type_name)?;
+        // A path expression default is anchored at the prim, as C++
+        // `_SetDefault` anchors it, so `.//` reads as `/Prim//`.
+        let value = types::parse_value(&mut self.cursor, &type_name)?
+            .map_path_expressions(&mut |expression| expression.make_absolute(current_path));
         let path = current_path.append_property(name)?;
 
         if self.cursor.at_punctuation('(')? {
@@ -653,14 +656,19 @@ impl<'a> Parser<'a> {
         );
 
         let list_op = apply_list_op(list_op, targets).context("Unable to build relationship targets listOp")?;
-        spec.add_list_op(FieldKey::TargetPaths, sdf::Value::PathListOp(list_op));
 
         if self.cursor.at_punctuation('(')? {
             self.parse_property_metadata(&mut spec)
                 .context("Unable to parse relationship metadata")?;
         }
 
-        Self::merge_spec(data, path, spec);
+        // Each statement's targets join those of the relationship's earlier
+        // statements (`delete rel r = ...` then `add rel r = ...`), as a
+        // connection's do.
+        Self::merge_spec(data, path.clone(), spec);
+        if let Some(merged) = data.get_mut(&path) {
+            merged.add_list_op(FieldKey::TargetPaths, sdf::Value::PathListOp(list_op));
+        }
         Ok(())
     }
 
@@ -2973,7 +2981,7 @@ def Xform "Root" (
     #[test]
     fn registered_metadata_stays_typed() {
         let text = "#usda 1.0\ndef \"P\" (\n    hidden = true\n)\n{\n}\n";
-        assert_eq!(field(text, "/P", "hidden"), Some(sdf::Value::token("true")));
+        assert_eq!(field(text, "/P", "hidden"), Some(sdf::Value::Bool(true)));
     }
 
     /// A field its schema declares as a list op reads as one, each operation
@@ -3261,5 +3269,21 @@ def \"Q\" (
             .unwrap();
         let names: Vec<&str> = names.iter().map(|t| t.as_str()).collect();
         assert_eq!(names, ["a", "b", "c", "d"]);
+    }
+
+    // Each statement of a relationship adds its list op to the others'.
+    #[test]
+    fn relationship_list_ops_accumulate() {
+        let text =
+            "#usda 1.0\ndef \"P\" {\n    rel m (doc = \"m\")\n    delete rel m = </k>\n    add rel m = </j>\n}\n";
+        let data = Parser::new(text).parse().unwrap();
+        let spec = data.get(&sdf::path("/P.m").unwrap()).unwrap();
+        let op = spec
+            .get(FieldKey::TargetPaths.as_str())
+            .unwrap()
+            .try_as_path_list_op_ref()
+            .unwrap();
+        assert_eq!(op.deleted_items(), [sdf::path("/k").unwrap()]);
+        assert_eq!(op.added_items(), [sdf::path("/j").unwrap()]);
     }
 }
