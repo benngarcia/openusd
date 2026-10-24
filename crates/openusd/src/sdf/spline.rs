@@ -1,12 +1,12 @@
 //! A spline-valued attribute's authored curve (C++ `TsSpline`, spec §7.4.2.4).
 //!
 //! [`Spline`] holds what a layer stores: the knots, the curve type, the
-//! extrapolation on either side and any inner loop. It does not evaluate the
-//! curve. The usda reader and writer spell it in the native spline grammar,
-//! and the usdc reader and writer encode it as C++ `Ts_BinaryDataAccess` does
-//! (`pxr/base/ts/binary.cpp`), version 1: the encoding crate version 0.12.0
-//! carries, which has no tangent algorithms, loop boundary times or time-code
-//! values.
+//! extrapolation on either side and any inner loop. [`Spline::eval`] evaluates
+//! the curve as C++ `TsSpline::Eval` does. The usda reader and writer spell it
+//! in the native spline grammar, and the usdc reader and writer encode it as
+//! C++ `Ts_BinaryDataAccess` does (`pxr/base/ts/binary.cpp`), version 1: the
+//! encoding crate version 0.12.0 carries, which has no tangent algorithms, loop
+//! boundary times or time-code values.
 
 use std::collections::HashMap;
 
@@ -15,6 +15,8 @@ use strum::FromRepr;
 use crate::gf::f16;
 
 use super::Value;
+
+mod eval;
 
 /// The authored data of a spline: its knots in ascending time, and how the
 /// curve runs between and beyond them.
