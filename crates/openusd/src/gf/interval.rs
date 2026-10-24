@@ -72,6 +72,13 @@ impl Interval {
         (value > self.min || (value == self.min && self.min_closed))
             && (value < self.max || (value == self.max && self.max_closed))
     }
+
+    /// The distance between the bounds, or 0 when they cross (C++
+    /// `GfInterval::GetSize`).
+    pub fn size(&self) -> f64 {
+        let size = self.max - self.min;
+        if 0.0 < size { size } else { 0.0 }
+    }
 }
 
 /// An included bound is a closed end, an excluded one an open end, and an
@@ -116,6 +123,12 @@ mod tests {
         assert!(Interval::closed(f64::NAN, 1.0).is_empty());
         assert!(!Interval::closed(2.0, 2.0).is_empty());
         assert!(!Interval::open(f64::NEG_INFINITY, f64::INFINITY).is_empty());
+    }
+
+    #[test]
+    fn size_of_crossed() {
+        assert_eq!(Interval::new(1.0, 4.0, true, false).size(), 3.0);
+        assert_eq!(Interval::closed(5.0, 1.0).size(), 0.0);
     }
 
     #[test]
