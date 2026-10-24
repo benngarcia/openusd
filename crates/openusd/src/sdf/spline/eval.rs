@@ -47,7 +47,10 @@ impl Spline {
     /// the loop is valid (C++ `Ts_SplineData::HasInnerLoops`).
     fn inner_loop(&self) -> Option<(LoopParams, usize)> {
         let lp = self.inner_loops?;
-        if lp.proto_end <= lp.proto_start || (lp.num_pre_loops == 0 && lp.num_post_loops == 0) {
+        // Written so that a NaN bound is no loop: C++ tests `protoEnd <=
+        // protoStart`, which lets NaN through to an out-of-bounds read.
+        let positive_span = lp.proto_end > lp.proto_start;
+        if !positive_span || (lp.num_pre_loops == 0 && lp.num_post_loops == 0) {
             return None;
         }
         let at = self.knots.partition_point(|k| k.time < lp.proto_start);
@@ -1014,5 +1017,33 @@ mod tests {
         ]);
         spline.value_type = SplineValueType::Float;
         assert_eq!(spline.eval(1.0), Some(f64::from(1.0_f32 / 3.0)));
+    }
+
+    // A NaN prototype bound, which the text format can carry, is no inner
+    // loop rather than an out-of-bounds read.
+    #[test]
+    fn nan_prototype_bound_is_no_loop() {
+        let mut spline = Spline::new(SplineValueType::Double);
+        for (time, value) in [(-5.0, 0.0), (-2.0, 1.0)] {
+            spline
+                .set_knot(Knot {
+                    time,
+                    value,
+                    pre_value: None,
+                    next_interpolation: Interpolation::Linear,
+                    pre_tangent: Tangent::default(),
+                    post_tangent: Tangent::default(),
+                    custom_data: HashMap::new(),
+                })
+                .unwrap();
+        }
+        spline.inner_loops = Some(LoopParams {
+            proto_start: -5.0,
+            proto_end: f64::NAN,
+            num_pre_loops: 0,
+            num_post_loops: 1,
+            value_offset: 0.0,
+        });
+        assert_eq!(spline.eval(1.0), Some(1.0));
     }
 }
