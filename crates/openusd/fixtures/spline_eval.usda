@@ -1,0 +1,134 @@
+#usda 1.0
+
+def "Splines"
+{
+    double bezier.spline = {
+        bezier,
+        pre: linear,
+        post: linear,
+        0: 1; pre (1, 0); post curve (2.5, 3),
+        6: 4; pre (0.5, -2); post curve (1, 1),
+        10: -2; pre (3, 0.25); post curve (0.2, 5),
+        13.5: 0.5; pre (1.5, -1); post curve (0, 0),
+    }
+    double blocked_extrapolation.spline = {
+        pre: none,
+        post: none,
+        1: 2; pre (0, 0); post linear,
+        3: 4; post curve (0, 0),
+    }
+    float float.spline = {
+        bezier,
+        pre: linear,
+        post: loop oscillate,
+        0: 0.1; pre (0, 0); post curve (1.7, 0.3),
+        5: 2.7; pre (1.1, -0.9); post linear,
+        7: 1.3; post curve (0, 0),
+    }
+    half half.spline = {
+        bezier,
+        pre: loop repeat,
+        post: sloped(0.4),
+        0: 0.0999756; pre (0, 0); post curve (1.7, 0.300049),
+        5: 2.19922 & 2.69922; pre (4, -0.899902); post curve (0, 0),
+        7: 1.2998; pre (3, 1); post curve (0, 0),
+    }
+    double held_extrapolation.spline = {
+        bezier,
+        1: 2; pre (0, 0); post curve (1, 1),
+        3: 4; pre (1, 1); post curve (0, 0),
+    }
+    double hermite.spline = {
+        hermite,
+        pre: linear,
+        post: linear,
+        -2: 1; pre (1); post curve (-3),
+        3: 2; pre (0.5); post curve (0.5),
+        7: -1; pre (2); post linear,
+        9: 0; post curve (0),
+    }
+    double inner_loop.spline = {
+        bezier,
+        pre: linear,
+        post: linear,
+        loop: (0, 4, 1, 2, 1.5),
+        -6: 1; pre (0, 0); post linear,
+        -1: 0; post curve (1, 1),
+        0: 2; pre (0, 0); post curve (1, 0),
+        2: 3; pre (0.5, 1); post linear,
+        3: 0 & 1; post curve (0.5, 0),
+        4: 5; pre (1, 0); post curve (0, 0),
+        11: 7; pre (0, 0); post held,
+        13: 0; post curve (0, 0),
+    }
+    double inner_loop_edges.spline = {
+        bezier,
+        pre: linear,
+        post: loop repeat,
+        loop: (0, 3, 2, 1, -2),
+        0: 1; pre (0, 0); post curve (1, 2),
+        2: 4; pre (0.5, -1); post linear,
+    }
+    double linear_dual_edges.spline = {
+        pre: linear,
+        post: linear,
+        1: 5 & 2; pre (0, 0); post linear,
+        3: 4; post linear,
+        5: 0 & 1; post curve (0, 0),
+    }
+    double loop_oscillate.spline = {
+        bezier,
+        pre: loop oscillate,
+        post: loop oscillate,
+        0: 0; pre (0, 0); post curve (1, 2),
+        3: 1; pre (0.5, 0); post held,
+        4: 2 & 2.5; post curve (0, 0),
+    }
+    double loop_repeat.spline = {
+        bezier,
+        pre: loop repeat,
+        post: loop repeat,
+        0: 0; pre (0, 0); post curve (1, 2),
+        3: 1; pre (1, 0); post linear,
+        4: 2.5; post curve (0, 0),
+    }
+    double loop_reset.spline = {
+        bezier,
+        pre: loop reset,
+        post: loop reset,
+        0: 0; pre (0, 0); post linear,
+        2: 1; post curve (0.5, 1),
+        4: 3; pre (1, -1); post curve (0, 0),
+    }
+    double regressive.spline = {
+        bezier,
+        0: 0; pre (0, 0); post curve (9, 2),
+        4: 3; pre (6, 1); post curve (0, 0),
+        8: 1; pre (10, -1); post curve (12, 0.5),
+        10: 2; pre (0, 0); post curve (0, 0),
+    }
+    double segments.spline = {
+        bezier,
+        pre: linear,
+        post: linear,
+        0: 1; pre (0, 0); post held,
+        2: 2 & 3; post linear,
+        4: 5; post none,
+        6: 6 & 7; post curve (1, 1),
+        8: 2; pre (0.5, -1); post linear,
+        9: -4 & 4; post held,
+        11: 0; post curve (0, 0),
+    }
+    double single_knot.spline = {
+        pre: loop repeat,
+        post: linear,
+        2: 3; pre (1, 1); post curve (1, 1),
+    }
+    double sloped_extrapolation.spline = {
+        pre: sloped(-1.5),
+        post: sloped(0.75),
+        1: 5 & 2; pre (0, 0); post linear,
+        3: 0 & 4; post curve (0, 0),
+    }
+}
+

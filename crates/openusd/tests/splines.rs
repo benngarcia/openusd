@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use openusd::sdf::AbstractData;
+use openusd::sdf::{self, AbstractData};
 use openusd::usda::{self, TextWriter};
 use openusd::usdc::CrateData;
 
@@ -98,6 +98,45 @@ fn loops_are_kept_as_openusd_keeps_them() {
 fn half_values_narrow_through_float() {
     let text = spline_layer("    half x.spline = {\n        1: 1.0004882812509095; pre (0, 0); post held,\n    }\n");
     assert!(round_trip(&text).contains("        1: 1; pre (0, 0); post held,\n"));
+}
+
+/// Evaluation against OpenUSD's own. `fixtures/spline_eval.usda` is a layer
+/// OpenUSD 26.11 wrote from splines built with `Ts.Spline` and `Ts.Knot` in
+/// Python, the knots set under `Ts.AntiRegressionAuthoringSelector(
+/// Ts.AntiRegressionNone)` so that regressive tangents reach the file: Bezier
+/// curves with arbitrary and regressive tangent widths, a Hermite curve, held,
+/// linear, curve and value-block segments, dual-valued knots, every
+/// extrapolation mode, an inner loop and float and half values. Each line of
+/// `fixtures/spline_eval.txt` is an attribute, `eval`, `pre` or `deriv`, a
+/// time, and what `TsSpline.Eval`, `EvalPreValue` or `EvalDerivative`
+/// returned for that layer read back by OpenUSD, narrowed to the attribute's
+/// type (`none` for no value), at the knots, between them and several loop
+/// iterations beyond either end. Every result must match to the bit.
+#[test]
+fn eval_matches_openusd() {
+    let data = usda::read_file(Path::new("fixtures/spline_eval.usda")).unwrap();
+    let expected = std::fs::read_to_string("fixtures/spline_eval.txt").unwrap();
+    let mut mismatches = Vec::new();
+    for line in expected.lines() {
+        let [name, aspect, time, value] = line.split(' ').collect::<Vec<_>>()[..] else {
+            panic!("malformed line {line:?}");
+        };
+        let path = sdf::Path::new(&format!("/Splines.{name}")).unwrap();
+        let field = data.field(&path, "spline").unwrap();
+        let spline = field.try_as_spline_ref().expect("a spline");
+        let time: f64 = time.parse().unwrap();
+        let got = match aspect {
+            "eval" => spline.eval(time),
+            "pre" => spline.eval_pre_value(time),
+            "deriv" => spline.eval_derivative(time),
+            other => panic!("aspect {other}"),
+        };
+        let want = (value != "none").then(|| value.parse::<f64>().unwrap());
+        if got.map(f64::to_bits) != want.map(f64::to_bits) {
+            mismatches.push(format!("{line}: got {got:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
 // A namespaced key in knot custom data is quoted; OpenUSD refuses it bare.
