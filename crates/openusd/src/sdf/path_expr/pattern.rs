@@ -95,6 +95,15 @@ impl PathPattern {
         self.prefix = prefix;
     }
 
+    /// Whether `prefix` can be this pattern's prefix, as C++
+    /// `SdfPathPattern::SetPrefix` decides: the absolute root or a prim path
+    /// when the pattern has match components, and with none, a prim-property
+    /// path too. A variant selection (`/P{v=one}`) is neither.
+    pub fn admits_prefix(&self, prefix: &Path) -> bool {
+        let root_or_prim = prefix.as_str() == "/" || prefix.is_prim();
+        root_or_prim || (self.components.is_empty() && prefix.is_property() && prefix.prim_path().is_prim())
+    }
+
     /// The match components past the prefix.
     pub fn components(&self) -> &[Component] {
         &self.components

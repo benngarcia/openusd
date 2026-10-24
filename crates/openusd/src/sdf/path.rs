@@ -410,6 +410,21 @@ impl Path {
         self.prefix(self.prim_len())
     }
 
+    /// The nearest prim at or above this path, past any variant selection it
+    /// ends in (C++ `SdfPath::GetPrimPath`): `/A{v=s}.attr` gives `/A`, and
+    /// `/A{v=s}B.attr` gives `/A{v=s}B`. [`prim_path`](Self::prim_path) keeps
+    /// a trailing selection, as C++ `GetPrimOrPrimVariantSelectionPath` does.
+    /// It is what the text format anchors a relative path at.
+    pub fn nearest_prim_path(&self) -> Path {
+        let mut path = self.prim_path();
+        while path.is_variant_selection()
+            && let Some(parent) = path.parent()
+        {
+            path = parent;
+        }
+        path
+    }
+
     /// The first `len` bytes of this path as a path of their own, sharing
     /// this one's text when `len` covers all of it.
     fn prefix(&self, len: usize) -> Path {

@@ -1134,7 +1134,7 @@ where
     fn coerce_for_declared(&self, value: sdf::Value) -> Result<sdf::Value, sdf::AuthoringError> {
         let declared = self.declared_type()?.ok_or(sdf::ValueTypeError::Empty)?;
         let value = if value.holds_path_expressions() {
-            let prim_path = self.path().prim_path();
+            let prim_path = self.path().nearest_prim_path();
             value.map_path_expressions(&mut |expr| expr.make_absolute(&prim_path))
         } else {
             value

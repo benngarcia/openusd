@@ -291,7 +291,12 @@ impl PathExpression {
     pub fn make_absolute(self, anchor: &Path) -> Self {
         self.map_atoms(&mut |atom| match atom {
             Atom::Pattern(mut pattern) => {
-                pattern.set_prefix(anchor_path(anchor, pattern.prefix()));
+                let prefix = anchor_path(anchor, pattern.prefix());
+                // C++ `SdfPathPattern::SetPrefix` ignores a prefix the
+                // pattern cannot take, leaving the pattern as it was.
+                if pattern.admits_prefix(&prefix) {
+                    pattern.set_prefix(prefix);
+                }
                 Self::make_atom_pattern(pattern)
             }
             Atom::Reference(mut reference) => {
